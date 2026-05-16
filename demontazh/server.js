@@ -2,9 +2,14 @@ const express = require('express');
 const session = require('express-session');
 const { Pool } = require('pg');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// --- Показываем где мы находимся при запуске ---
+console.log('📂 Текущая директория:', __dirname);
+console.log('📄 Файлы в директории:', fs.readdirSync(__dirname));
 
 // --- Подключение к PostgreSQL ---
 const pool = new Pool({
@@ -21,7 +26,9 @@ pool.connect()
 // --- Middleware ---
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname)));
+
+// Статические файлы из текущей папки
+app.use(express.static(__dirname));
 
 app.use(session({
     secret: process.env.SECRET_KEY || 'demontazh-secret-key-2026',
@@ -29,11 +36,11 @@ app.use(session({
     saveUninitialized: false,
     cookie: { 
         secure: false,
-        maxAge: 24 * 60 * 60 * 1000 // 24 часа
+        maxAge: 24 * 60 * 60 * 1000
     }
 }));
 
-// --- Пользователи (из твоего фронтенда) ---
+// --- Пользователи ---
 const USERS = {
     'xell': { password: 'adminov', role: 'admin', label: 'Бригадир' },
     'check': { password: 'check', role: 'worker', label: 'Напарник' }
@@ -48,7 +55,7 @@ async function initDB() {
                 type VARCHAR(300) NOT NULL,
                 price VARCHAR(50),
                 date VARCHAR(50),
-                desc TEXT,
+                "desc" TEXT,
                 status VARCHAR(20) DEFAULT 'new',
                 marks JSONB DEFAULT '{}',
                 created VARCHAR(20),
@@ -139,7 +146,6 @@ app.get('/api/orders', isAuthenticated, async (req, res) => {
             'SELECT * FROM orders ORDER BY updated DESC, id DESC'
         );
         
-        // Преобразуем данные для фронтенда
         const orders = result.rows.map(row => ({
             id: row.id,
             type: row.type,
@@ -206,7 +212,6 @@ app.put('/api/orders/:id', isAuthenticated, async (req, res) => {
         const { type, price, date, desc, status, marks } = req.body;
         const dateTime = formatDateTime();
 
-        // Проверяем существование заказа
         const existing = await pool.query('SELECT * FROM orders WHERE id = $1', [id]);
         if (existing.rows.length === 0) {
             return res.status(404).json({ error: 'Заказ не найден' });
@@ -214,7 +219,6 @@ app.put('/api/orders/:id', isAuthenticated, async (req, res) => {
 
         const order = existing.rows[0];
 
-        // Обновляем только переданные поля
         const updatedType = type !== undefined ? type : order.type;
         const updatedPrice = price !== undefined ? price : order.price;
         const updatedDate = date !== undefined ? date : order.date;
@@ -268,25 +272,39 @@ app.delete('/api/orders/:id', isAuthenticated, isAdmin, async (req, res) => {
     }
 });
 
-// --- Отдача HTML страниц ---
+// --- Главная страница ---
 app.get('/', (req, res) => {
-    const filePath = path.join(__dirname, 'index.html');
-    console.log('Пытаюсь отдать файл:', filePath);
+    // Ищем index.html
+    const possiblePaths = [
+        path.join(__dirname, 'index.html'),
+        path.join(__dirname, 'public', 'index.html'),
+        path.join(__dirname, 'build', 'index.html')
+    ];
     
-    // Проверяем существование файла
-    const fs = require('fs');
-    if (fs.existsSync(filePath)) {
-        res.sendFile(filePath);
-    } else {
-        console.error('❌ Файл не найден:', filePath);
-        console.error('Файлы в папке:', fs.readdirSync(__dirname));
-        res.status(404).send('index.html не найден. Проверьте деплой.');
+    for (const filePath of possiblePaths) {
+        if (fs.existsSync(filePath)) {
+            console.log('✅ Отдаю:', filePath);
+            return res.sendFile(filePath);
+        }
     }
+    
+    // Если не нашли — показываем что есть
+    console.error('❌ index.html не найден');
+    const files = fs.readdirSync(__dirname);
+    res.status(404).send(`
+        <h1>Файл не найден</h1>
+        <p>index.html должен быть в корне проекта.</p>
+        <p>Файлы в директории: ${files.join(', ')}</p>
+        <p>Путь: ${__dirname}</p>
+    `);
+});
+
+// --- Обработка 404 ---
+app.use((req, res) => {
+    res.status(404).send(`Not Found: ${req.url}`);
 });
 
 // --- Запуск сервера ---
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Сервер запущен на порту ${PORT}`);
-    console.log(`👤 Бригадир: xell / adminov`);
-    console.log(`👤 Напарник: check / check`);
 });
