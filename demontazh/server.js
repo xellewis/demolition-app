@@ -270,19 +270,17 @@ app.delete('/api/orders/:id', isAuthenticated, isAdmin, async (req, res) => {
 
 // --- Отдача HTML страниц ---
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
-});
-
-app.get('/login', (req, res) => {
-    res.redirect('/');
-});
-
-// --- Обработка 404 ---
-app.use((req, res) => {
-    if (req.path.startsWith('/api/')) {
-        res.status(404).json({ error: 'Не найдено' });
+    const filePath = path.join(__dirname, 'index.html');
+    console.log('Пытаюсь отдать файл:', filePath);
+    
+    // Проверяем существование файла
+    const fs = require('fs');
+    if (fs.existsSync(filePath)) {
+        res.sendFile(filePath);
     } else {
-        res.redirect('/');
+        console.error('❌ Файл не найден:', filePath);
+        console.error('Файлы в папке:', fs.readdirSync(__dirname));
+        res.status(404).send('index.html не найден. Проверьте деплой.');
     }
 });
 
