@@ -230,6 +230,9 @@ canvas#bg{position:fixed;inset:0;pointer-events:none;z-index:0;}
 </div>
 
 <script>
+// ⚡ Хранение токена авторизации
+let authToken = null;
+
 // PARTICLES
 (function(){
   const c=document.getElementById('bg'),ctx=c.getContext('2d');
@@ -252,56 +255,129 @@ canvas#bg{position:fixed;inset:0;pointer-events:none;z-index:0;}
   tick();
 })();
 
-// AUTH
-const USERS={xell:{pass:'adminov',role:'admin',label:'Бригадир'},check:{pass:'check',role:'worker',label:'Напарник'}};
+// AUTH - ИСПРАВЛЕНО
 let role=null,orders=[],filter='all',editId=null,rejId=null,polling=null;
 
-function doLogin(){
+// 🔑 Новая функция doLogin - работает с токеном
+async function doLogin(){
   const u=document.getElementById('lu').value.trim().toLowerCase();
   const p=document.getElementById('lp').value;
   const e=document.getElementById('lerr');
-  if(USERS[u]&&USERS[u].pass===p){
-    role=USERS[u].role;
+  
+  try {
+    const response = await fetch('/api/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username: u, password: p})
+    });
+    
+    if (!response.ok) {
+      e.style.display='block';
+      document.getElementById('lp').value='';
+      return;
+    }
+    
+    const data = await response.json();
+    
+    // Сохраняем токен
+    authToken = data.token;
+    role = data.role;
+    
     document.getElementById('loginScreen').style.display='none';
     document.getElementById('app').style.display='block';
-    document.getElementById('ulabel').textContent=USERS[u].label;
-    if(role==='admin')document.getElementById('adminBar').style.display='';
+    document.getElementById('ulabel').textContent=data.label;
+    
+    if(role==='admin') {
+      document.getElementById('adminBar').style.display='';
+    }
+    
     e.style.display='none';
     loadOrders();
     polling=setInterval(loadOrders,8000);
-  }else{
+    
+  } catch(err) {
     e.style.display='block';
     document.getElementById('lp').value='';
   }
 }
+
+// 🔑 Новая функция doLogout - чистит токен
 function doLogout(){
-  role=null;clearInterval(polling);
+  if (authToken) {
+    fetch('/api/logout', {
+      method: 'POST',
+      headers: {'Authorization': 'Bearer ' + authToken}
+    }).catch(()=>{});
+  }
+  
+  authToken = null;
+  role = null;
+  clearInterval(polling);
+  
   document.getElementById('loginScreen').style.display='flex';
   document.getElementById('app').style.display='none';
   document.getElementById('adminBar').style.display='none';
-  document.getElementById('lu').value='';document.getElementById('lp').value='';
+  document.getElementById('lu').value='';
+  document.getElementById('lp').value='';
 }
 
-// API
-async function api(m,p,b){
-  const o={method:m,headers:{'Content-Type':'application/json'}};
-  if(b)o.body=JSON.stringify(b);
-  const r=await fetch(p,o);
-  if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error||r.statusText);}
+// 🔑 Новая функция api - добавляет токен в запросы
+async function api(m, p, b){
+  const headers = {'Content-Type': 'application/json'};
+  
+  // Добавляем токен если есть
+  if (authToken) {
+    headers['Authorization'] = 'Bearer ' + authToken;
+  }
+  
+  const o = { method: m, headers };
+  if (b) o.body = JSON.stringify(b);
+  
+  const r = await fetch(p, o);
+  
+  if (r.status === 401) {
+    // Токен истёк - выходим
+    authToken = null;
+    doLogout();
+    throw new Error('Сессия истекла');
+  }
+  
+  if (!r.ok) {
+    const e = await r.json().catch(()=>({}));
+    throw new Error(e.error || r.statusText);
+  }
+  
   return r.json();
 }
+
+// Всё остальное без изменений
 async function loadOrders(){
   try{
-    sync(true);orders=await api('GET','/api/orders');sync(false);render();
-  }catch{syncErr();}
+    sync(true);
+    orders=await api('GET','/api/orders');
+    sync(false);
+    render();
+  }catch(e){
+    console.error('Ошибка загрузки:', e);
+    syncErr();
+  }
 }
+
 function sync(s){
   document.getElementById('sdot').className='sdot'+(s?' sy':'');
   document.getElementById('stxt').textContent=s?'обновление...':'синхронизировано';
 }
-function syncErr(){document.getElementById('sdot').className='sdot er';document.getElementById('stxt').textContent='нет соединения';}
+function syncErr(){
+  document.getElementById('sdot').className='sdot er';
+  document.getElementById('stxt').textContent='нет соединения';
+}
 
-function setF(f,el){filter=f;document.querySelectorAll('.fbtn').forEach(b=>b.classList.remove('active'));el.classList.add('active');render();}
+function setF(f,el){
+  filter=f;
+  document.querySelectorAll('.fbtn').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  render();
+}
 
 function openModal(id){
   editId=id||null;
@@ -337,8 +413,15 @@ async function saveOrder(){
     closeModal();await loadOrders();
   }catch(e){alert('Ошибка сохранения: '+(e.message||e));}
 }
-async function delOrder(id){if(!confirm('Удалить заказ?'))return;try{await api('DELETE','/api/orders/'+id);await loadOrders();}catch(e){alert('Ошибка удаления: '+(e.message||e));}}
-async function chStatus(id,v){try{await api('PUT','/api/orders/'+id,{status:v});await loadOrders();}catch(e){alert('Ошибка: '+(e.message||e));loadOrders();}}
+async function delOrder(id){
+  if(!confirm('Удалить заказ?'))return;
+  try{await api('DELETE','/api/orders/'+id);await loadOrders();}
+  catch(e){alert('Ошибка удаления: '+(e.message||e));}
+}
+async function chStatus(id,v){
+  try{await api('PUT','/api/orders/'+id,{status:v});await loadOrders();}
+  catch(e){alert('Ошибка: '+(e.message||e));loadOrders();}
+}
 
 // MARKS
 const MARKS={
